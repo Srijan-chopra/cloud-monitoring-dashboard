@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cloud Monitoring Dashboard</title>
+<style>
+:root{--bg:#f3f2f1;--card:#fff;--ink:#201f1e;--mute:#605e5c;--blue:#0078d4;--navy:#003a6c;--red:#d13438;--amber:#b8860b;--green:#107c10;--line:#e1dfdd}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 "Segoe UI",system-ui,sans-serif}
+header{background:var(--navy);color:#fff;padding:14px 24px;display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between}
+header h1{font-size:19px;margin:0;font-weight:600}
+.badge{background:#dff6dd;color:#0b5a0b;border-radius:3px;padding:2px 10px;font-size:13px}
+nav{background:#fff;border-bottom:1px solid var(--line);padding:0 16px;display:flex;flex-wrap:wrap}
+nav button{background:none;border:0;border-bottom:3px solid transparent;padding:12px 16px;font:inherit;color:var(--mute);cursor:pointer}
+nav button.on{color:var(--blue);border-color:var(--blue);font-weight:600}
+main{max-width:1100px;margin:0 auto;padding:20px 16px 60px}
+section{display:none}section.on{display:block}
+.card{background:var(--card);border:1px solid var(--line);border-radius:4px;padding:16px;margin-bottom:16px}
+.card h2{font-size:16px;margin:0 0 4px}.card p{margin:0 0 10px;color:var(--mute)}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+button.b,.go{font:inherit;border:1px solid var(--blue);background:var(--blue);color:#fff;padding:6px 14px;border-radius:3px;cursor:pointer}
+button.b.alt{background:#fff;color:var(--blue)}button.b.red{background:var(--red);border-color:var(--red)}
+button.b:focus-visible,nav button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid #000;outline-offset:2px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.tile .big{font-size:28px;font-weight:600}.tile .lab{color:var(--mute);font-size:13px}
+svg.ch{width:100%;height:90px;display:block;margin-top:6px}
+input,textarea{font:inherit;border:1px solid #8a8886;border-radius:3px;padding:6px 8px}
+textarea{width:100%;font-family:Consolas,monospace;font-size:14px;min-height:96px}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th{background:#faf9f8;text-align:left;font-weight:600}th,td{border-bottom:1px solid var(--line);padding:6px 10px}
+.tw{overflow-x:auto}
+.pill{display:inline-block;border-radius:10px;padding:0 10px;font-size:13px;color:#fff}
+.ok{background:var(--green)}.warn{background:var(--amber)}.bad{background:var(--red)}
+.small{font-size:13px;color:var(--mute)}
+#toast{position:fixed;right:16px;top:16px;max-width:360px;background:#fff;border-left:6px solid var(--red);box-shadow:0 4px 16px rgba(0,0,0,.25);padding:12px 16px;display:none;z-index:9}
+code{background:#eee;padding:1px 5px;border-radius:3px}
+@media (prefers-reduced-motion:no-preference){#toast.show{animation:in .25s}}
+@keyframes in{from{transform:translateX(30px);opacity:0}}
+</style>
+</head>
+<body>
+<div id="toast" role="alert"></div>
+<header>
+  <h1>Cloud Monitoring Dashboard &nbsp;|&nbsp; <span id="target"></span></h1>
+  <span class="badge" id="live">Connecting...</span>
+</header>
+<nav id="tabs">
+  <button data-t="dash" class="on">Dashboard</button>
+  <button data-t="logs">Logs (Log Analytics)</button>
+  <button data-t="alerts">Alerts (Azure Monitor)</button>
+  <button data-t="adv">Advisor</button>
+  <button data-t="health">Service Health</button>
+  <button data-t="about">About</button>
+</nav>
+<main>
+
+<section id="dash" class="on">
+  <div class="card">
+    <h2>Run live checks against the web app</h2>
+    <p>Each click sends a real HTTP request from a Vercel server to this site and records the real status code and response time.</p>
+    <div class="row">
+      <button class="b" data-s="200">Healthy endpoint (200)</button>
+      <button class="b alt" data-s="404">Missing page (404)</button>
+      <button class="b alt" data-s="500">Server error (500)</button>
+      <button class="b alt" data-s="slow">Slow request</button>
+      <button class="b" id="auto">Start automatic monitoring</button>
+      <button class="b alt" id="burst">Send 10 x 404 (trigger alert)</button>
+      <button class="b red" id="reset">Reset everything</button>
+    </div>
+  </div>
+  <div class="tiles" id="tiles"></div>
+  <p class="small">Charts show the last 3 minutes in 5-second steps. This is the same idea as the metrics charts pinned to an Azure dashboard.</p>
+</section>
+
+<section id="logs">
+  <div class="card">
+    <h2>Query the logs</h2>
+    <p>A small version of Kusto Query Language (KQL). Table: <code>AppServiceHTTPLogs</code>. Columns: TimeGenerated, CsMethod, CsUriStem, ScStatus, TimeTaken (ms), Region.</p>
+    <textarea id="q" spellcheck="false" aria-label="KQL query">AppServiceHTTPLogs
+| summarize count() by ScStatus</textarea>
+    <div class="row" style="margin-top:8px">
+      <button class="b" id="run">Run query</button>
+      <button class="b alt" data-q="AppServiceHTTPLogs | take 20">Latest 20</button>
+      <button class="b alt" data-q="AppServiceHTTPLogs | summarize count() by ScStatus">Count by status</button>
+      <button class="b alt" data-q="AppServiceHTTPLogs | where ScStatus >= 400 | summarize count() by CsUriStem">Errors by URL</button>
+      <button class="b alt" data-q="AppServiceHTTPLogs | where TimeTaken > 800 | project TimeGenerated, CsUriStem, TimeTaken | take 20">Slow requests</button>
+    </div>
+    <p class="small" style="margin-top:10px">Supported: <code>where Column ==, !=, &gt;, &gt;=, &lt;, &lt;=, contains Value</code> &nbsp; <code>summarize count() by Column</code> &nbsp; <code>project A, B</code> &nbsp; <code>take N</code></p>
+    <div id="qout" class="tw"></div>
+  </div>
+</section>
+
+<section id="alerts">
+  <div class="card">
+    <h2>Alert rule: alert-http-4xx-errors</h2>
+    <p>Condition: <b>total HTTP 4xx errors in the last 60 seconds</b> is greater than the threshold. (Real Azure uses a 5-minute window; 60 seconds here keeps the demo quick.) When true, the action group sends a notification (on-screen banner and webhook).</p>
+    <div class="row">
+      <label>Threshold <input id="thr" type="number" min="1" value="5" style="width:80px"></label>
+      <span class="small">Action group: on-screen banner + Discord/Slack webhook</span>
+      <span id="rulestate" class="pill ok">Healthy</span>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Fired alerts</h2>
+    <div class="tw"><table><thead><tr><th>Time</th><th>Rule</th><th>Severity</th><th>Details</th><th>Notification</th></tr></thead><tbody id="alist"></tbody></table></div>
+    <p id="anone" class="small">No alerts yet. Go to Dashboard and press "Send 10 x 404".</p>
+  </div>
+</section>
+
+<section id="adv">
+  <div class="card">
+    <h2>Azure Advisor recommendations</h2>
+    <p>Advisor looks at your resource and suggests improvements in five areas. These update as your traffic changes.</p>
+    <div class="tw"><table><thead><tr><th>Category</th><th>Impact</th><th>Recommendation</th><th>What to do</th></tr></thead><tbody id="advlist"></tbody></table></div>
+  </div>
+</section>
+
+<section id="health">
+  <div class="card">
+    <h2>Service Health</h2>
+    <p>Live status of the platforms this app depends on (read from their public status pages) plus the latest check of your own endpoint.</p>
+    <div class="row" style="margin-bottom:10px"><button class="b" id="rf">Refresh status</button></div>
+    <div class="tw"><table><thead><tr><th>Service</th><th>Region</th><th>Status</th></tr></thead><tbody id="hlist"></tbody></table></div>
+  </div>
+</section>
+
+<section id="about">
+  <div class="card">
+    <h2>How this maps to Azure services</h2>
+    <div class="tw"><table>
+      <tr><th>This dashboard</th><th>Azure equivalent</th><th>AZ-900 idea</th></tr>
+      <tr><td>Dashboard tab</td><td>Azure Monitor metrics + portal dashboard</td><td>Monitoring and visualisation</td></tr>
+      <tr><td>Logs tab</td><td>Log Analytics workspace and KQL</td><td>Centralised log storage and queries</td></tr>
+      <tr><td>Alerts tab</td><td>Azure Monitor alert rule + action group</td><td>Automatic notifications</td></tr>
+      <tr><td>Advisor tab</td><td>Azure Advisor</td><td>Reliability, security, cost, performance, operational excellence</td></tr>
+      <tr><td>Service Health tab</td><td>Azure Service Health</td><td>Platform outages and maintenance</td></tr>
+      <tr><td>Monitored web app on Vercel</td><td>Azure App Service (PaaS)</td><td>Platform as a Service</td></tr>
+    </table></div>
+    <p class="small" style="margin-top:10px">Check history is kept in this browser (localStorage). Checks run on Vercel serverless functions.</p>
+  </div>
+</section>
+
+</main>
+<script>
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const load=(k,d)=>{try{return JSON.parse(localStorage.getItem(k))||d}catch(e){return d}};
+const store=()=>{try{localStorage.setItem('logs',JSON.stringify(logs));localStorage.setItem('alerts',JSON.stringify(alerts))}catch(e){}};
+let logs=load('logs',[]), alerts=load('alerts',[]), incident=false, timer=null, lastFire=0, lastToast=0;
+
+/* ---------- tabs ---------- */
+$$('#tabs button').forEach(b=>b.onclick=()=>{
+  $$('#tabs button').forEach(x=>x.classList.toggle('on',x===b));
+  $$('section').forEach(s=>s.classList.toggle('on',s.id===b.dataset.t));
+});
+
+/* ---------- the simulated web app ---------- */
+const PATHS={200:['/api/health'],404:['/missing-page','/old-link','/admin'],500:['/api/fail'],slow:['/api/slow']};
+const TARGET=location.protocol.startsWith('http')?location.origin:'';
+$('#target').textContent=location.host||'open through Vercel';
+async function send(kind){
+  const list=PATHS[kind], path=list[Math.floor(Math.random()*list.length)];
+  const q=kind==='slow'?'?ms='+(900+Math.floor(Math.random()*900)):'';
+  try{
+    const d=await (await fetch('/api/probe?url='+encodeURIComponent(TARGET+path+q))).json();
+    if(d.error&&!d.status) throw Error(d.error);
+    logs.push({TimeGenerated:Date.now(),CsMethod:'GET',CsUriStem:path,ScStatus:d.status,TimeTaken:d.ms,Region:d.region});
+    $('#live').textContent='Live | probe region: '+d.region;
+    if(logs.length>3000) logs.shift(); store();
+  }catch(e){$('#live').textContent='Probe API not reachable. Deploy to Vercel or run "vercel dev".'}
+}
+$$('[data-s]').forEach(b=>b.onclick=()=>{send(b.dataset.s==='slow'?'slow':+b.dataset.s);tick()});
+$('#burst').onclick=()=>{for(let i=0;i<10;i++)send(404);tick()};
+$('#auto').onclick=()=>{
+  if(timer){clearInterval(timer);timer=null;$('#auto').textContent='Start automatic monitoring';return}
+  $('#auto').textContent='Stop automatic monitoring';
+  timer=setInterval(()=>{const r=Math.random();send(r<.68?200:r<.9?404:r<.96?500:'slow');},2500);
+};
+$('#reset').onclick=()=>{if(confirm('Delete all logs and alerts?')){logs=[];alerts=[];lastFire=0;store();tick()}};
+
+/* ---------- metrics (Azure Monitor style) ---------- */
+function buckets(){
+  const now=Date.now(),N=36,b=Array.from({length:N},()=>[]);
+  for(const l of logs){const i=N-1-Math.floor((now-l.TimeGenerated)/5000);if(i>=0&&i<N)b[i].push(l)}
+  return b;
+}
+const avg=a=>a.length?Math.round(a.reduce((s,l)=>s+l.TimeTaken,0)/a.length):0;
+const METRICS=[
+  {n:'Requests',c:'#0078d4',f:b=>b.length,tot:a=>a.length,u:''},
+  {n:'HTTP 4xx errors',c:'#b8860b',f:b=>b.filter(l=>l.ScStatus>=400&&l.ScStatus<500).length,tot:a=>a.filter(l=>l.ScStatus>=400&&l.ScStatus<500).length,u:''},
+  {n:'HTTP 5xx errors',c:'#d13438',f:b=>b.filter(l=>l.ScStatus>=500).length,tot:a=>a.filter(l=>l.ScStatus>=500).length,u:''},
+  {n:'Average response time',c:'#107c10',f:avg,tot:avg,u:' ms'}
+];
+function drawTiles(){
+  const bk=buckets(), win=bk.flat();
+  $('#tiles').innerHTML=METRICS.map(m=>{
+    const v=bk.map(m.f), max=Math.max(...v,1), w=300, h=90;
+    const pts=v.map((y,i)=>(i/(v.length-1)*w).toFixed(1)+','+(h-2-y/max*(h-10)).toFixed(1)).join(' ');
+    return `<div class="card tile"><div class="lab">${m.n}</div><div class="big" style="color:${m.c}">${m.tot(win)}${m.u}</div>
+    <svg class="ch" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="${m.n} chart">
+    <polygon points="0,${h} ${pts} ${w},${h}" fill="${m.c}" opacity=".12"/><polyline points="${pts}" fill="none" stroke="${m.c}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>
+    <div class="lab">Last 3 minutes (peak ${max}${m.u} per 5 s)</div></div>`}).join('');
+}
+
+/* ---------- alerts (Azure Monitor alert rule + action group) ---------- */
+function toast(text){const t=$('#toast');t.textContent=text;t.style.display='block';t.classList.add('show');clearTimeout(lastToast);lastToast=setTimeout(()=>t.style.display='none',8000)}
+function fire(rule,sev,msg){
+  const a={t:Date.now(),rule,sev,msg,to:'Sending...'}; alerts.unshift(a); store();
+  toast('ALERT: '+rule+'. '+msg);
+  fetch('/api/notify',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text:'['+sev+'] '+rule+': '+msg})})
+    .then(r=>r.json()).then(d=>{a.to=d.sent?'Webhook delivered':'On-screen only (no webhook set)';store()}).catch(()=>{a.to='On-screen only';store()});
+}
+function evalAlert(){
+  const thr=Math.max(1,+$('#thr').value||5), now=Date.now();
+  const n=logs.filter(l=>l.ScStatus>=400&&l.ScStatus<500&&now-l.TimeGenerated<60000).length;
+  const hot=n>thr, el=$('#rulestate');
+  el.className='pill '+(hot?'bad':'ok'); el.textContent=hot?`Firing (${n} errors)`:`Healthy (${n} errors)`;
+  if(hot&&now-lastFire>60000){lastFire=now;fire('alert-http-4xx-errors','Sev 2',`${n} HTTP 4xx errors in the last 60 seconds (threshold ${thr}).`)}
+}
+function drawAlerts(){
+  $('#anone').style.display=alerts.length?'none':'block';
+  $('#alist').innerHTML=alerts.map(a=>`<tr><td>${new Date(a.t).toLocaleTimeString()}</td><td>${esc(a.rule)}</td><td>${a.sev}</td><td>${esc(a.msg)}</td><td>${esc(a.to)}</td></tr>`).join('');
+}
+
+/* ---------- Advisor ---------- */
+function drawAdvisor(){
+  const n=logs.length, e4=logs.filter(l=>l.ScStatus>=400&&l.ScStatus<500).length, e5=logs.filter(l=>l.ScStatus>=500).length, av=avg(logs), r=[];
+  if(n>=10&&e5/n>.02) r.push(['Reliability','High','Server errors are '+Math.round(e5/n*100)+'% of requests','Open Logs, find the failing URLs, fix and redeploy.']);
+  if(n>=10&&e4/n>.1) r.push(['Operational excellence','Medium','Many broken links ('+Math.round(e4/n*100)+'% are 404)','Add redirects for old URLs or fix the links.']);
+  if(av>500) r.push(['Performance','Medium','Average response time is '+av+' ms','Cache responses or scale up to a paid plan.']);
+  r.push(['Security','High','Add security headers (HSTS, CSP, X-Content-Type-Options)','Set them in vercel.json headers.']);
+  r.push(['Reliability','Low','Single deployment region','Add a second region on a paid plan for production.']);
+  r.push(['Cost','Low','Hobby plan is enough for this traffic','No action needed.']);
+  const cls={High:'bad',Medium:'warn',Low:'ok'};
+  $('#advlist').innerHTML=r.map(x=>`<tr><td>${x[0]}</td><td><span class="pill ${cls[x[1]]}">${x[1]}</span></td><td>${x[2]}</td><td>${x[3]}</td></tr>`).join('');
+}
+
+/* ---------- Service Health ---------- */
+const PLATFORMS=[['Vercel (hosting)','https://www.vercel-status.com/api/v2/status.json'],['GitHub (source code)','https://www.githubstatus.com/api/v2/status.json']];
+let health=[], lastHA=0;
+async function refreshHealth(){
+  health=[];
+  for(const [n,u] of PLATFORMS){
+    try{const d=await (await fetch(u)).json(), ok=d.status.indicator==='none';
+      health.push([n,ok?'ok':'bad',d.status.description]);
+      if(!ok&&Date.now()-lastHA>600000){lastHA=Date.now();fire('alert-service-health','Sev 1',n+': '+d.status.description)}
+    }catch(e){health.push([n,'warn','Status page unreachable'])}
+  }
+  drawHealth();
+}
+function drawHealth(){
+  const last=logs.filter(l=>l.CsUriStem==='/api/health').pop(), rows=health.slice();
+  rows.push(['Monitored app (/api/health)',last?(last.ScStatus===200?'ok':'bad'):'warn',last?'HTTP '+last.ScStatus+', '+last.TimeTaken+' ms':'No checks yet']);
+  $('#hlist').innerHTML=rows.map(r=>`<tr><td>${r[0]}</td><td>${r[0].includes('app')?'Vercel':'Global'}</td><td><span class="pill ${r[1]}">${esc(r[2])}</span></td></tr>`).join('');
+}
+$('#rf').onclick=refreshHealth;
+refreshHealth(); setInterval(refreshHealth,300000);
+
+/* ---------- KQL-lite (Log Analytics) ---------- */
+const COLS=['TimeGenerated','CsMethod','CsUriStem','ScStatus','TimeTaken','Region'];
+function cmp(x,op,v){
+  const a=isNaN(+x)?String(x):+x, b=isNaN(+v)?v:+v;
+  if(op==='contains') return String(x).toLowerCase().includes(String(v).toLowerCase());
+  return op==='=='?a==b:op==='!='?a!=b:op==='>'?a>b:op==='>='?a>=b:op==='<'?a<b:a<=b;
+}
+function runKql(q){
+  const parts=q.split('|').map(s=>s.trim()).filter(Boolean);
+  if(!parts.length||parts[0].toLowerCase()!=='appservicehttplogs') throw Error('Start the query with the table name: AppServiceHTTPLogs');
+  let rows=logs.slice().reverse(), cols=COLS.slice(), m;
+  for(const p of parts.slice(1)){
+    if(m=p.match(/^where\s+(\w+)\s*(==|!=|>=|<=|>|<|contains)\s*['"]?(.+?)['"]?$/i)){
+      if(!cols.includes(m[1])) throw Error('Unknown column: '+m[1]);
+      rows=rows.filter(r=>cmp(r[m[1]],m[2].toLowerCase(),m[3]));
+    }else if(m=p.match(/^summarize\s+(?:\w+\s*=\s*)?count\(\)\s+by\s+(\w+)$/i)){
+      if(!cols.includes(m[1])) throw Error('Unknown column: '+m[1]);
+      const g={}; rows.forEach(r=>g[r[m[1]]]=(g[r[m[1]]]||0)+1);
+      rows=Object.entries(g).map(([k,v])=>({[m[1]]:k,Count:v})).sort((a,b)=>b.Count-a.Count); cols=[m[1],'Count'];
+    }else if(m=p.match(/^project\s+(.+)$/i)){
+      const c=m[1].split(',').map(s=>s.trim()); c.forEach(x=>{if(!cols.includes(x))throw Error('Unknown column: '+x)}); cols=c;
+    }else if(m=p.match(/^take\s+(\d+)$/i)){ rows=rows.slice(0,+m[1]);
+    }else throw Error('Not supported in this simulator: '+p);
+  }
+  return {rows,cols};
+}
+function showQuery(){
+  const out=$('#qout');
+  try{
+    const {rows,cols}=runKql($('#q').value);
+    if(!rows.length){out.innerHTML='<p class="small">No rows. Send some traffic on the Dashboard tab first.</p>';return}
+    out.innerHTML=`<table><thead><tr>${cols.map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>`+
+      rows.slice(0,200).map(r=>'<tr>'+cols.map(c=>`<td>${esc(c==='TimeGenerated'?new Date(r[c]).toLocaleTimeString():r[c])}</td>`).join('')+'</tr>').join('')+'</tbody></table>'+
+      `<p class="small">${rows.length} row(s)${rows.length>200?', showing 200':''}</p>`;
+  }catch(e){out.innerHTML=`<p style="color:var(--red)">${esc(e.message)}</p>`}
+}
+$('#run').onclick=showQuery;
+$$('[data-q]').forEach(b=>b.onclick=()=>{$('#q').value=b.dataset.q.split(' | ').join('\n| ');showQuery()});
+
+/* ---------- main loop ---------- */
+function tick(){evalAlert();drawTiles();drawAlerts();drawAdvisor();drawHealth()}
+tick();setInterval(tick,1000);
+</script>
+</body>
+</html>
